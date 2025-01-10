@@ -2,9 +2,8 @@ package kinesumer
 
 import (
 	"context"
+	"slices"
 	"time"
-
-	"github.com/daangn/kinesumer/pkg/collection"
 )
 
 const (
@@ -17,7 +16,7 @@ func (k *Kinesumer) doLeadershipSyncShardIDs(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if collection.EqualsSS(k.shardCaches[stream], shards.ids()) {
+		if slices.Equal(k.shardCaches[stream], shards.ids()) {
 			return nil
 		}
 		if err := k.stateStore.UpdateShards(ctx, stream, shards); err != nil {

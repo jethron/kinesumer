@@ -3,6 +3,7 @@ package kinesumer
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"sync"
 	"testing"
@@ -15,8 +16,6 @@ import (
 	"github.com/aws/aws-sdk-go/service/kinesis"
 	"github.com/guregu/dynamo"
 	"github.com/stretchr/testify/assert"
-
-	"github.com/daangn/kinesumer/pkg/collection"
 )
 
 type testEnv struct {
@@ -245,7 +244,7 @@ func TestShardsRebalancing(t *testing.T) {
 	for i, id := range clientIDs {
 		shardIDs := clients[id].shards["events"].ids()
 		expected := expectedShardRanges1[i]
-		if !collection.EqualsSS(shardIDs, expected) {
+		if !slices.Equal(shardIDs, expected) {
 			t.Errorf(
 				"expected %v, got %v", expected, shardIDs,
 			)
@@ -308,7 +307,7 @@ func TestShardsRebalancing(t *testing.T) {
 	for i, id := range clientIDs {
 		shardIDs := clients[id].shards["events"].ids()
 		expected := expectedShardRanges2[i]
-		if !collection.EqualsSS(shardIDs, expected) {
+		if !slices.Equal(shardIDs, expected) {
 			t.Errorf(
 				"expected %v, got %v", expected, shardIDs,
 			)

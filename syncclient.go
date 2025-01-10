@@ -4,12 +4,11 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
-
-	"github.com/daangn/kinesumer/pkg/collection"
 )
 
 func (k *Kinesumer) loopSyncClient() {
@@ -116,7 +115,7 @@ func (k *Kinesumer) syncShardInfoForStream(
 	splitEndIdx := int(math.Round(float64(idx+1) * r))
 	newShards := shards[splitStartIdx:splitEndIdx]
 
-	if collection.EqualsSS(k.shards[stream].ids(), newShards.ids()) {
+	if slices.Equal(k.shards[stream].ids(), newShards.ids()) {
 		return nil
 	}
 
@@ -136,7 +135,7 @@ func (k *Kinesumer) syncShardInfoForStream(
 	// Delete uninterested shard ids.
 	shardIDs := k.shards[stream].ids()
 	k.nextIters[stream].Range(func(key, _ interface{}) bool {
-		if !collection.ContainsS(shardIDs, key.(string)) {
+		if !slices.Contains(shardIDs, key.(string)) {
 			k.nextIters[stream].Delete(key)
 		}
 		return true
