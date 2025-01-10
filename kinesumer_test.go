@@ -2,13 +2,13 @@ package kinesumer
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/golang/mock/gomock"
-	"github.com/pkg/errors"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"

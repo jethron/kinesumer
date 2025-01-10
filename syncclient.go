@@ -2,11 +2,11 @@ package kinesumer
 
 import (
 	"context"
+	"errors"
 	"math"
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 
 	"github.com/daangn/kinesumer/pkg/collection"
@@ -58,7 +58,7 @@ func (k *Kinesumer) loopSyncClient() {
 
 func (k *Kinesumer) pingAliveness(ctx context.Context) error {
 	if err := k.stateStore.PingClientAliveness(ctx, k.id); err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	return nil
 }
@@ -66,7 +66,7 @@ func (k *Kinesumer) pingAliveness(ctx context.Context) error {
 func (k *Kinesumer) syncShardInfo(ctx context.Context) error {
 	clientIDs, err := k.stateStore.ListAllAliveClientIDs(ctx)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 
 	// Skip if there are no alive clients.
@@ -88,7 +88,7 @@ func (k *Kinesumer) syncShardInfo(ctx context.Context) error {
 	// Update shard information.
 	for _, stream := range k.streams {
 		if err := k.syncShardInfoForStream(ctx, stream, idx, numOfClient); err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 	}
 	return nil
@@ -102,10 +102,10 @@ func (k *Kinesumer) syncShardInfoForStream(
 		// If there are no cache, fetch shards from Kinesis directly.
 		shards, err = k.listShards(stream)
 		if err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 	} else if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 
 	numShards := len(shards)
@@ -145,7 +145,7 @@ func (k *Kinesumer) syncShardInfoForStream(
 	// Sync shard check points.
 	seqMap, err := k.stateStore.ListCheckPoints(ctx, stream, shardIDs)
 	if err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 
 	if _, ok := k.checkPoints[stream]; !ok {

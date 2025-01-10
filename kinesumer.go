@@ -2,6 +2,8 @@ package kinesumer
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"time"
@@ -13,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials/stscreds"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/kinesis"
-	"github.com/pkg/errors"
 	"github.com/rs/zerolog/log"
 )
 
@@ -187,15 +188,13 @@ type Kinesumer struct {
 // NewKinesumer initializes and returns a new Kinesumer client.
 func NewKinesumer(cfg *Config) (*Kinesumer, error) {
 	if cfg.App == "" {
-		return nil, errors.WithStack(
-			errors.New("you must pass the app name"),
-		)
+		return nil, errors.New("you must pass the app name")
 	}
 
 	// Make unique client id.
 	id, err := os.Hostname()
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	id += xrand.StringN(6) // Add suffix.
 
@@ -208,7 +207,7 @@ func NewKinesumer(cfg *Config) (*Kinesumer, error) {
 	if cfg.StateStore == nil {
 		s, err := newStateStore(cfg)
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, err
 		}
 		stateStore = s
 	} else {
@@ -223,7 +222,7 @@ func NewKinesumer(cfg *Config) (*Kinesumer, error) {
 	}
 	sess, err := session.NewSession(awsCfg)
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 
 	var cfgs []*aws.Config
@@ -285,7 +284,7 @@ func NewKinesumer(cfg *Config) (*Kinesumer, error) {
 	kinesumer.commitTimeout = cfg.Commit.Timeout
 
 	if err := kinesumer.init(); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	return kinesumer, nil
 }
@@ -297,7 +296,7 @@ func (k *Kinesumer) init() error {
 
 	// Register itself to state store.
 	if err := k.stateStore.RegisterClient(ctx, k.id); err != nil {
-		return errors.WithStack(err)
+		return err
 	}
 	return nil
 }
@@ -307,7 +306,7 @@ func (k *Kinesumer) listShards(stream string) (Shards, error) {
 		StreamName: aws.String(stream),
 	})
 	if err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 	var shards []*Shard
 	for _, shard := range output.Shards {
@@ -327,7 +326,7 @@ func (k *Kinesumer) listShards(stream string) (Shards, error) {
 			NextToken:  nextToken,
 		})
 		if err != nil {
-			return nil, errors.WithStack(err)
+			return nil, err
 		}
 		for _, shard := range output.Shards {
 			// Skip CLOSED shards.
@@ -355,12 +354,12 @@ func (k *Kinesumer) Consume(
 	// In EFO mode, client should register itself to Kinesis stream.
 	if k.efoMode {
 		if err := k.registerConsumers(); err != nil {
-			return nil, errors.WithStack(err)
+			return nil, err
 		}
 	}
 
 	if err := k.syncShardInfo(ctx); err != nil {
-		return nil, errors.WithStack(err)
+		return nil, err
 	}
 
 	go k.loopSyncClient()
@@ -393,7 +392,7 @@ func (k *Kinesumer) registerConsumers() error {
 				},
 			)
 			if err != nil {
-				return errors.WithStack(err)
+				return err
 			}
 			if *dOutput.ConsumerDescription.ConsumerStatus == kinesis.ConsumerStatusActive {
 				return nil
@@ -411,7 +410,7 @@ func (k *Kinesumer) registerConsumers() error {
 			},
 		)
 		if err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 
 		streamARN := dOutput.StreamDescription.StreamARN
@@ -426,7 +425,7 @@ func (k *Kinesumer) registerConsumers() error {
 		var awsErr awserr.Error
 		if errors.As(err, &awsErr) {
 			if awsErr.Code() != "ResourceInUseException" {
-				return errors.WithStack(err)
+				return err
 			}
 			lOutput, err := k.client.ListStreamConsumers(
 				&kinesis.ListStreamConsumersInput{
@@ -435,7 +434,7 @@ func (k *Kinesumer) registerConsumers() error {
 				},
 			)
 			if err != nil {
-				return errors.WithStack(err)
+				return err
 			}
 
 			var consumer *kinesis.Consumer
@@ -452,7 +451,7 @@ func (k *Kinesumer) registerConsumers() error {
 			}
 			continue
 		} else if err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 		k.efoMeta[stream] = &efoMeta{
 			consumerARN:  *rOutput.Consumer.ConsumerARN,
@@ -462,7 +461,7 @@ func (k *Kinesumer) registerConsumers() error {
 	}
 	for _, efoMeta := range k.efoMeta {
 		if err := waitForActive(efoMeta); err != nil {
-			return errors.WithStack(err)
+			return err
 		}
 	}
 	return nil
@@ -579,7 +578,7 @@ func (k *Kinesumer) subscribeToShard(streamEvents chan kinesis.SubscribeToShardE
 
 		output, err := k.client.SubscribeToShardWithContext(ctx, input)
 		if err != nil {
-			k.sendOrDiscardError(errors.WithStack(err))
+			k.sendOrDiscardError(err)
 			cancel()
 			continue
 		}
@@ -669,7 +668,7 @@ func (k *Kinesumer) consumeOnce(stream string, shard *Shard) ([]*kinesis.Record,
 
 	shardIter, err := k.getNextShardIterator(ctx, stream, shard.ID)
 	if err != nil {
-		k.sendOrDiscardError(errors.WithStack(err))
+		k.sendOrDiscardError(err)
 
 		var riue *kinesis.ResourceInUseException
 		return nil, errors.As(err, &riue)
@@ -680,7 +679,7 @@ func (k *Kinesumer) consumeOnce(stream string, shard *Shard) ([]*kinesis.Record,
 		ShardIterator: shardIter,
 	})
 	if err != nil {
-		k.sendOrDiscardError(errors.WithStack(err))
+		k.sendOrDiscardError(err)
 
 		var riue *kinesis.ResourceInUseException
 		if errors.As(err, &riue) {
@@ -798,7 +797,7 @@ func (k *Kinesumer) commitCheckPointsPerStream(stream string, checkpoints []*Sha
 	defer cancel()
 
 	if err := k.stateStore.UpdateCheckPoints(timeoutCtx, checkpoints); err != nil {
-		k.sendOrDiscardError(errors.Wrapf(err, "failed to commit on stream: %s", stream))
+		k.sendOrDiscardError(fmt.Errorf("failed to commit on stream %s: %w", stream, err))
 		return
 	}
 }
