@@ -703,10 +703,11 @@ func (k *Kinesumer) consumeLoop(stream string, shard *Shard) {
 			}
 
 			for i, record := range records {
+				nested := record
 				r := &Record{
 					Stream:  stream,
 					ShardID: shard.ID,
-					Record:  &record,
+					Record:  &nested,
 				}
 				k.records <- r
 
