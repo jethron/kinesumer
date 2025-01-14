@@ -37,6 +37,16 @@ const (
 	recordsChanBuffer = 20
 )
 
+type StartPosition int
+
+const (
+	StartPositionLatest StartPosition = iota
+	StartPositionTrimHorizon
+	StartPositionAtSequenceNumber
+	StartPositionAfterSequenceNumber
+	StartPositionAtTimestamp
+)
+
 // Error codes.
 var (
 	ErrEmptySequenceNumber    = errors.New("kinesumer: sequence number can't be empty")
@@ -66,6 +76,10 @@ type Config struct {
 	DynamoDBRegion   string
 	DynamoDBTable    string
 	DynamoDBEndpoint string // Only for local server.
+
+	StartPositionType   StartPosition
+	StartTimestamp      *time.Time
+	StartSequenceNumber *string
 
 	// These configs are not used in EFO mode.
 	ScanLimit    int32
@@ -181,6 +195,8 @@ type Kinesumer struct {
 	commitTimeout  time.Duration
 	commitInterval time.Duration
 
+	startPosition *types.StartingPosition
+
 	// To wait the running consumer loops when stopping.
 	wait sync.WaitGroup
 	stop chan struct{}
@@ -240,29 +256,57 @@ func NewKinesumer(cfg *Config) (*Kinesumer, error) {
 		cfg.Commit = NewDefaultCommitConfig()
 	}
 
+	var sp *types.StartingPosition
+	switch cfg.StartPositionType {
+	case StartPositionLatest:
+		sp = &types.StartingPosition{
+			Type: types.ShardIteratorTypeLatest,
+		}
+	case StartPositionTrimHorizon:
+		sp = &types.StartingPosition{
+			Type: types.ShardIteratorTypeTrimHorizon,
+		}
+	case StartPositionAfterSequenceNumber:
+		sp = &types.StartingPosition{
+			Type:           types.ShardIteratorTypeAfterSequenceNumber,
+			SequenceNumber: cfg.StartSequenceNumber,
+		}
+	case StartPositionAtSequenceNumber:
+		sp = &types.StartingPosition{
+			Type:           types.ShardIteratorTypeAfterSequenceNumber,
+			SequenceNumber: cfg.StartSequenceNumber,
+		}
+	case StartPositionAtTimestamp:
+		sp = &types.StartingPosition{
+			Type:      types.ShardIteratorTypeAtTimestamp,
+			Timestamp: cfg.StartTimestamp,
+		}
+	}
+
 	buffer := recordsChanBuffer
 	kinesumer := &Kinesumer{
-		id:           id,
-		client:       kinesis.NewFromConfig(awsCfg),
-		app:          cfg.App,
-		rgn:          cfg.Region,
-		efoMode:      cfg.EFOMode,
-		records:      make(chan *Record, buffer),
-		errors:       make(chan error, 1),
-		stateStore:   stateStore,
-		shardCaches:  make(map[string][]string),
-		shards:       make(map[string]Shards),
-		checkPoints:  make(map[string]*sync.Map),
-		offsets:      make(map[string]*sync.Map),
-		nextIters:    make(map[string]*sync.Map),
-		scanLimit:    defaultScanLimit,
-		scanTimeout:  defaultScanTimeout,
-		scanInterval: defaultScanInterval,
-		started:      make(chan struct{}),
-		wait:         sync.WaitGroup{},
-		stop:         make(chan struct{}),
-		mu:           &sync.Mutex{},
-		close:        make(chan struct{}),
+		id:            id,
+		client:        kinesis.NewFromConfig(awsCfg),
+		app:           cfg.App,
+		rgn:           cfg.Region,
+		efoMode:       cfg.EFOMode,
+		records:       make(chan *Record, buffer),
+		errors:        make(chan error, 1),
+		stateStore:    stateStore,
+		shardCaches:   make(map[string][]string),
+		shards:        make(map[string]Shards),
+		checkPoints:   make(map[string]*sync.Map),
+		offsets:       make(map[string]*sync.Map),
+		nextIters:     make(map[string]*sync.Map),
+		scanLimit:     defaultScanLimit,
+		scanTimeout:   defaultScanTimeout,
+		scanInterval:  defaultScanInterval,
+		started:       make(chan struct{}),
+		startPosition: sp,
+		wait:          sync.WaitGroup{},
+		stop:          make(chan struct{}),
+		mu:            &sync.Mutex{},
+		close:         make(chan struct{}),
 	}
 
 	if cfg.ScanLimit > 0 {
@@ -572,11 +616,9 @@ func (k *Kinesumer) subscribeToShard(streamEvents chan types.SubscribeToShardEve
 		ctx, cancel := context.WithCancel(ctx)
 
 		input := &kinesis.SubscribeToShardInput{
-			ConsumerARN: aws.String(k.efoMeta[stream].consumerARN),
-			ShardId:     aws.String(shard.ID),
-			StartingPosition: &types.StartingPosition{
-				Type: types.ShardIteratorTypeLatest,
-			},
+			ConsumerARN:      aws.String(k.efoMeta[stream].consumerARN),
+			ShardId:          aws.String(shard.ID),
+			StartingPosition: k.startPosition,
 		}
 
 		if seq, ok := k.checkPoints[stream].Load(shard.ID); ok {
@@ -724,7 +766,9 @@ func (k *Kinesumer) getNextShardIterator(
 		input.ShardIteratorType = types.ShardIteratorTypeAfterSequenceNumber
 		input.StartingSequenceNumber = aws.String(seq.(string))
 	} else {
-		input.ShardIteratorType = types.ShardIteratorTypeLatest
+		input.ShardIteratorType = k.startPosition.Type
+		input.Timestamp = k.startPosition.Timestamp
+		input.StartingSequenceNumber = k.startPosition.SequenceNumber
 	}
 
 	output, err := k.client.GetShardIterator(ctx, input)
