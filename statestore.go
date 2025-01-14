@@ -47,16 +47,23 @@ type (
 // newStateStore initializes the state store.
 func newStateStore(cfg *Config) (StateStore, error) {
 	ctx := context.TODO()
-	awsCfg, err := config.LoadDefaultConfig(
-		ctx,
-		config.WithRegion(cfg.DynamoDBRegion),
-		config.WithBaseEndpoint(cfg.DynamoDBEndpoint),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("kinesumer: failed to create an aws config: %w", err)
+
+	var client *dynamo.DB
+	if cfg.DynamoClient != nil {
+		client = dynamo.NewFromIface(cfg.DynamoClient)
+	} else {
+		awsCfg, err := config.LoadDefaultConfig(
+			ctx,
+			config.WithRegion(cfg.DynamoDBRegion),
+			config.WithBaseEndpoint(cfg.DynamoDBEndpoint),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("kinesumer: failed to create an aws config: %w", err)
+		}
+		client = dynamo.New(awsCfg)
 	}
+
 	// Ping-like request to check if client can reach to DynamoDB.
-	client := dynamo.New(awsCfg)
 	table := client.Table(cfg.DynamoDBTable)
 	if _, err := table.Describe().Run(ctx); err != nil {
 		return nil, fmt.Errorf("kinesumer: client can't access to dynamodb: %w", err)

@@ -236,20 +236,28 @@ func NewKinesumer(cfg *Config) (*Kinesumer, error) {
 	}
 
 	// Initialize the AWS session to build Kinesis client.
-	awsCfg, err := config.LoadDefaultConfig(
-		ctx,
-		config.WithRegion(cfg.KinesisRegion),
-		config.WithBaseEndpoint(cfg.KinesisEndpoint),
-	)
+	var kinesisClient *kinesis.Client
 
-	if err != nil {
-		return nil, err
-	}
+	if cfg.KinesisClient != nil {
+		kinesisClient = cfg.KinesisClient
+	} else {
+		awsCfg, err := config.LoadDefaultConfig(
+			ctx,
+			config.WithRegion(cfg.KinesisRegion),
+			config.WithBaseEndpoint(cfg.KinesisEndpoint),
+		)
 
-	if cfg.RoleARN != "" {
-		stsClient := sts.NewFromConfig(awsCfg)
-		arp := stscreds.NewAssumeRoleProvider(stsClient, cfg.RoleARN)
-		awsCfg.Credentials = aws.NewCredentialsCache(arp)
+		if err != nil {
+			return nil, err
+		}
+
+		if cfg.RoleARN != "" {
+			stsClient := sts.NewFromConfig(awsCfg)
+			arp := stscreds.NewAssumeRoleProvider(stsClient, cfg.RoleARN)
+			awsCfg.Credentials = aws.NewCredentialsCache(arp)
+		}
+
+		kinesisClient = kinesis.NewFromConfig(awsCfg)
 	}
 
 	if cfg.Commit == nil {
@@ -286,7 +294,7 @@ func NewKinesumer(cfg *Config) (*Kinesumer, error) {
 	buffer := recordsChanBuffer
 	kinesumer := &Kinesumer{
 		id:            id,
-		client:        kinesis.NewFromConfig(awsCfg),
+		client:        kinesisClient,
 		app:           cfg.App,
 		rgn:           cfg.Region,
 		efoMode:       cfg.EFOMode,
