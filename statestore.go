@@ -6,9 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/guregu/dynamo"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/guregu/dynamo/v2"
 )
 
 //go:generate mockgen -source=statestore.go -destination=statestore_mock.go -package=kinesumer StateStore
@@ -47,19 +46,19 @@ type (
 
 // newStateStore initializes the state store.
 func newStateStore(cfg *Config) (StateStore, error) {
-	awsCfg := aws.NewConfig()
-	awsCfg.WithRegion(cfg.DynamoDBRegion)
-	if cfg.DynamoDBEndpoint != "" {
-		awsCfg.WithEndpoint(cfg.DynamoDBEndpoint)
-	}
-	sess, err := session.NewSession(awsCfg)
+	ctx := context.TODO()
+	awsCfg, err := config.LoadDefaultConfig(
+		ctx,
+		config.WithRegion(cfg.DynamoDBRegion),
+		config.WithBaseEndpoint(cfg.DynamoDBEndpoint),
+	)
 	if err != nil {
-		return nil, fmt.Errorf("kinesumer: failed to create an aws session: %w", err)
+		return nil, fmt.Errorf("kinesumer: failed to create an aws config: %w", err)
 	}
 	// Ping-like request to check if client can reach to DynamoDB.
-	client := dynamo.New(sess)
+	client := dynamo.New(awsCfg)
 	table := client.Table(cfg.DynamoDBTable)
-	if _, err := table.Describe().Run(); err != nil {
+	if _, err := table.Describe().Run(ctx); err != nil {
 		return nil, fmt.Errorf("kinesumer: client can't access to dynamodb: %w", err)
 	}
 	return &stateStore{
@@ -83,7 +82,7 @@ func (s *stateStore) GetShards(
 		Get("pk", key).
 		Range("sk", dynamo.Equal, stream).
 		Consistent(true).
-		OneWithContext(ctx, &cache)
+		One(ctx, &cache)
 	if errors.Is(err, dynamo.ErrNotFound) {
 		return nil, ErrNoShardCache
 	} else if err != nil {
@@ -101,7 +100,7 @@ func (s *stateStore) UpdateShards(
 		Update("pk", key).
 		Range("sk", stream).
 		Set("shards", shards).
-		RunWithContext(ctx)
+		Run(ctx)
 	if err != nil {
 		return err
 	}
@@ -120,7 +119,7 @@ func (s *stateStore) ListAllAliveClientIDs(ctx context.Context) ([]string, error
 		Range("sk", dynamo.Greater, " ").
 		Filter("last_update > ?", now.Add(-outdatedGap)).
 		Order(dynamo.Ascending).
-		AllWithContext(ctx, &clients)
+		All(ctx, &clients)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +143,7 @@ func (s *stateStore) RegisterClient(
 		ClientID:   clientID,
 		LastUpdate: now,
 	}
-	if err := s.db.table.Put(client).RunWithContext(ctx); err != nil {
+	if err := s.db.table.Put(client).Run(ctx); err != nil {
 		return err
 	}
 	return nil
@@ -158,7 +157,7 @@ func (s *stateStore) DeregisterClient(
 	err := s.db.table.
 		Delete("pk", key).
 		Range("sk", clientID).
-		RunWithContext(ctx)
+		Run(ctx)
 	if err != nil {
 		return err
 	}
@@ -176,7 +175,7 @@ func (s *stateStore) PingClientAliveness(
 		Update("pk", key).
 		Range("sk", clientID).
 		Set("last_update", now).
-		RunWithContext(ctx)
+		Run(ctx)
 	if err != nil {
 		return err
 	}
@@ -194,7 +193,7 @@ func (s *stateStore) PruneClients(ctx context.Context) error {
 		Get("pk", key).
 		Range("last_update", dynamo.Less, now.Add(-outdatedGap)).
 		Index("index-client-key-last-update").
-		AllWithContext(ctx, &outdated)
+		All(ctx, &outdated)
 	if err != nil {
 		return err
 	}
@@ -214,7 +213,7 @@ func (s *stateStore) PruneClients(ctx context.Context) error {
 		Batch("pk", "sk").
 		Write().
 		Delete(keys...).
-		RunWithContext(ctx)
+		Run(ctx)
 	if err != nil {
 		return err
 	}
@@ -244,7 +243,7 @@ func (s *stateStore) ListCheckPoints(
 	err := s.db.table.
 		Batch("pk", "sk").
 		Get(keys...).
-		AllWithContext(ctx, &checkPoints)
+		All(ctx, &checkPoints)
 	if errors.Is(err, dynamo.ErrNotFound) {
 		return seqMap, nil
 	} else if err != nil {
@@ -274,7 +273,7 @@ func (s *stateStore) UpdateCheckPoints(ctx context.Context, checkpoints []*Shard
 		Batch("pk", "sk").
 		Write().
 		Put(stateCheckPoints...).
-		RunWithContext(ctx)
+		Run(ctx)
 	if err != nil {
 		return err
 	}

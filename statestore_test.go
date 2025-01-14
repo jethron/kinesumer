@@ -2,23 +2,25 @@ package kinesumer
 
 import (
 	"context"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/guregu/dynamo"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/guregu/dynamo/v2"
+	"github.com/stretchr/testify/assert"
 )
 
 func newTestDynamoDB(t *testing.T) *dynamo.DB {
-	awsCfg := aws.NewConfig()
-	awsCfg.WithRegion("ap-northeast-2")
-	awsCfg.WithEndpoint("http://localhost:14566")
-	sess, err := session.NewSession(awsCfg)
+	ctx := context.TODO()
+	awsCfg, err := config.LoadDefaultConfig(
+		ctx,
+		config.WithRegion("ap-northeast-2"),
+		config.WithBaseEndpoint("http://localhost:14566"),
+	)
 	if err != nil {
 		t.Fatal("failed to init test env:", err.Error())
 	}
-	return dynamo.New(sess)
+	return dynamo.New(awsCfg)
 }
 
 func cleanUpStateStore(t *testing.T, store *stateStore) {
@@ -31,8 +33,10 @@ func cleanUpStateStore(t *testing.T, store *stateStore) {
 		pksks []*PkSk
 		keys  []dynamo.Keyed
 	)
+
+	ctx := context.TODO()
 	table := store.db.table
-	if err := table.Scan().All(&pksks); err != nil {
+	if err := table.Scan().All(ctx, &pksks); err != nil {
 		t.Fatal("failed to scan the state table:", err.Error())
 	}
 	for _, pksk := range pksks {
@@ -42,7 +46,7 @@ func cleanUpStateStore(t *testing.T, store *stateStore) {
 		Batch("pk", "sk").
 		Write().
 		Delete(keys...).
-		Run(); err != nil {
+		Run(ctx); err != nil {
 		t.Fatal("failed to delete all test data:", err.Error())
 	}
 }
@@ -94,7 +98,7 @@ func TestStateStore_UpdateCheckPointsWorksFine(t *testing.T) {
 							dynamo.Keys{buildCheckPointKey("test", "foobar"), "shardId-000"},
 							dynamo.Keys{buildCheckPointKey("test", "foo"), "shardId-001"},
 						}...,
-					).All(&result)
+					).All(context.TODO(), &result)
 				if assert.NoError(t, err) {
 					return assert.EqualValues(t, expected, result)
 				}

@@ -11,15 +11,16 @@ import (
 
 	"github.com/golang/mock/gomock"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/kinesis"
-	"github.com/guregu/dynamo"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis"
+	"github.com/aws/aws-sdk-go-v2/service/kinesis/types"
+	"github.com/guregu/dynamo/v2"
 	"github.com/stretchr/testify/assert"
 )
 
 type testEnv struct {
-	kinesis      *kinesis.Kinesis
+	kinesis      *kinesis.Client
 	stateStoreDB *dynamo.DB
 	client1      *Kinesumer
 	client2      *Kinesumer
@@ -27,16 +28,19 @@ type testEnv struct {
 }
 
 func newTestEnv(t *testing.T) *testEnv {
-	awsCfg := aws.NewConfig()
-	awsCfg.WithRegion("ap-northeast-2")
-	awsCfg.WithEndpoint("http://localhost:14566")
-	sess, err := session.NewSession(awsCfg)
+	ctx := context.TODO()
+
+	awsCfg, err := config.LoadDefaultConfig(
+		ctx,
+		config.WithRegion("ap-northeast-2"),
+		config.WithBaseEndpoint("http://localhost:14566"),
+	)
 	if err != nil {
 		t.Fatal("failed to init test env:", err.Error())
 	}
 	var (
-		kinesisClient = kinesis.New(sess, awsCfg)
-		stateStoreDB  = dynamo.New(sess)
+		kinesisClient = kinesis.NewFromConfig(awsCfg)
+		stateStoreDB  = dynamo.New(awsCfg)
 	)
 
 	config := &Config{
@@ -52,15 +56,15 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	client1, err := NewKinesumer(config)
 	if err != nil {
-		t.Fatal("failed to init test env:", err.Error())
+		t.Fatal("failed to init new kinesumer 1:", err.Error())
 	}
 	client2, err := NewKinesumer(config)
 	if err != nil {
-		t.Fatal("failed to init test env:", err.Error())
+		t.Fatal("failed to init new kinesumer 2:", err.Error())
 	}
 	client3, err := NewKinesumer(config)
 	if err != nil {
-		t.Fatal("failed to init test env:", err.Error())
+		t.Fatal("failed to init new kinesumer 3:", err.Error())
 	}
 
 	// Drain the errors.
@@ -96,8 +100,9 @@ func (e *testEnv) cleanUp(t *testing.T) {
 		pksks []*PkSk
 		keys  []dynamo.Keyed
 	)
+	ctx := context.TODO()
 	table := e.stateStoreDB.Table("kinesumer-state-store")
-	if err := table.Scan().All(&pksks); err != nil {
+	if err := table.Scan().All(ctx, &pksks); err != nil {
 		t.Fatal("failed to scan the state table:", err.Error())
 	}
 	for _, pksk := range pksks {
@@ -107,15 +112,16 @@ func (e *testEnv) cleanUp(t *testing.T) {
 		Batch("pk", "sk").
 		Write().
 		Delete(keys...).
-		Run(); err != nil {
+		Run(ctx); err != nil {
 		t.Fatal("failed to delete all test data:", err.Error())
 	}
 }
 
 func (e *testEnv) produceEvents(t *testing.T) {
 	_, err := e.kinesis.PutRecords(
+		context.TODO(),
 		&kinesis.PutRecordsInput{
-			Records: []*kinesis.PutRecordsRequestEntry{
+			Records: []types.PutRecordsRequestEntry{
 				{
 					Data:         []byte("raw data one"),
 					PartitionKey: aws.String("pkey one"),
@@ -253,12 +259,11 @@ func TestShardsRebalancing(t *testing.T) {
 
 	// Update kinesis shard count.
 	_, err = env.kinesis.UpdateShardCount(
+		context.TODO(),
 		&kinesis.UpdateShardCountInput{
-			ScalingType: aws.String(
-				kinesis.ScalingTypeUniformScaling,
-			),
+			ScalingType:      types.ScalingTypeUniformScaling,
 			StreamName:       aws.String("events"),
-			TargetShardCount: aws.Int64(8),
+			TargetShardCount: aws.Int32(8),
 		},
 	)
 	if err != nil {
@@ -331,7 +336,7 @@ func TestKinesumer_MarkRecordWorksFine(t *testing.T) {
 		env.client1.MarkRecord(&Record{
 			Stream:  "events",
 			ShardID: shardID,
-			Record: &kinesis.Record{
+			Record: &types.Record{
 				SequenceNumber: &expectedSeqNum,
 			},
 		})
@@ -370,7 +375,7 @@ func TestKinesumer_MarkRecordFails(t *testing.T) {
 			input: &Record{
 				Stream:  "foobar",
 				ShardID: "shardId-000",
-				Record: &kinesis.Record{
+				Record: &types.Record{
 					SequenceNumber: func() *string {
 						emptyString := ""
 						return &emptyString
@@ -390,7 +395,7 @@ func TestKinesumer_MarkRecordFails(t *testing.T) {
 			input: &Record{
 				Stream:  "foo",
 				ShardID: "shardId-000",
-				Record: &kinesis.Record{
+				Record: &types.Record{
 					SequenceNumber: func() *string {
 						seq := "0"
 						return &seq
@@ -442,7 +447,7 @@ func TestKinesumer_Commit(t *testing.T) {
 			env.client1.MarkRecord(&Record{
 				Stream:  "events",
 				ShardID: shardID,
-				Record: &kinesis.Record{
+				Record: &types.Record{
 					SequenceNumber: &expectedSeqNum,
 				},
 			})

@@ -15,8 +15,8 @@ const (
 
 // stateShardCache manages shard id list cache.
 type stateShardCache struct {
-	ShardCacheKey string   `dynamo:"pk,pk"`
-	Stream        string   `dynamo:"sk,sk"`
+	ShardCacheKey string   `dynamo:"pk"`
+	Stream        string   `dynamo:"sk"`
 	Shards        Shards   `dynamo:"shards"`
 	ShardIDs      []string `dynamo:"shard_ids"` // Deprecated.
 }
@@ -27,9 +27,9 @@ func buildShardCacheKey(app string) string {
 
 // stateClient manages consumer client.
 type stateClient struct {
-	ClientKey  string    `dynamo:"pk,pk"`
-	ClientID   string    `dynamo:"sk,sk"`
-	LastUpdate time.Time `dynamo:"last_update,lsi1"`
+	ClientKey  string    `dynamo:"pk,hash"`
+	ClientID   string    `dynamo:"sk,range"`
+	LastUpdate time.Time `dynamo:"last_update"`
 }
 
 func buildClientKey(app string) string {
